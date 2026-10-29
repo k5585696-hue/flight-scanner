@@ -216,7 +216,7 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; line-height: 
       <label class="fld">出發日期<input type="date" id="f-dep1"></label>
       <label class="fld">彈性：最晚出發日（選填）<input type="date" id="f-dep2"><small>填了就會查這段期間每一天</small></label>
       <label class="fld rt">回程日期<input type="date" id="f-ret"></label>
-      <label class="fld rt">或：玩幾天<input id="f-stay" inputmode="numeric" placeholder="例如 5 或 4,5,6"><small>可以填多個，用逗號分開</small></label>
+      <label class="fld rt">或：住幾晚<input id="f-stay" inputmode="numeric" placeholder="例如 4 或 3,4,5"><small>4 晚 = 5 天 4 夜；可以填多個，用逗號分開</small></label>
     </div>
 
     <div class="row">
@@ -377,7 +377,7 @@ function describe(c) {
   const ppl = [`大人 ${c.adults}`, c.children ? `小孩 ${c.children}` : "", c.infants ? `嬰兒 ${c.infants}` : ""].filter(Boolean).join("・");
   return [
     `${c.from} → ${c.to}`, when,
-    c.trip === "round-trip" ? `來回・玩 ${(c.stay_days || []).join("、")} 天` : "單程",
+    c.trip === "round-trip" ? `來回・住 ${(c.stay_days || []).join("、")} 晚` : "單程",
     ppl, c.seat && c.seat !== "economy" ? SEATS[c.seat] : "",
     c.max_stops === 0 ? "只看直飛" : c.max_stops == null ? "不限轉機" : `最多轉 ${c.max_stops} 次`,
     c.checked_bags ? `托運行李 ${c.checked_bags} 件` : "不含托運行李",
@@ -648,15 +648,15 @@ function readForm() {
   let stay = [];
   if (trip === "round-trip") {
     stay = parseStay(F.stay.value || "");
-    if (!stay || !stay.length) errors.push("來回票請選回程日期，或填玩幾天");
-    else if (stay.some(n => n < 1 || n > 60)) errors.push("玩幾天要在 1～60 天之間");
+    if (!stay || !stay.length) errors.push("來回票請選回程日期，或填住幾晚");
+    else if (stay.some(n => n < 1 || n > 60)) errors.push("住幾晚要在 1～60 晚之間");
   }
   const h1 = F.h1.value === "" ? null : +F.h1.value, h2 = F.h2.value === "" ? null : +F.h2.value;
   if (h1 != null && h2 != null && h1 > h2) errors.push("起飛時段的開始不能比結束晚");
   const below = parseInt(F.below.value.replace(/[^\d]/g, ""), 10) || null;
   const nDates = d1 && d2 >= start ? daysBetween(start, d2) + 1 : 0;
   const queries = nDates * (trip === "round-trip" ? (stay || []).length || 1 : 1);
-  if (queries > 60) errors.push(`每次要查 ${queries} 筆太多了，請縮短日期區間或減少玩幾天的選項（建議 30 筆以內）`);
+  if (queries > 60) errors.push(`每次要查 ${queries} 筆太多了，請縮短日期區間或減少住幾晚的選項（建議 30 筆以內）`);
   const cfg = {
     name: F.name.value.trim() || (from && to ? `${cityName(from)} → ${cityName(to)}` : ""),
     from, to, trip,

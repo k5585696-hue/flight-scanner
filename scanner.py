@@ -145,7 +145,7 @@ def parse_route(r: dict, i: int) -> Route:
     if trip not in ("round-trip", "one-way"):
         sys.exit(f"設定錯誤：「{name}」的 trip 只能是 round-trip 或 one-way")
     if trip == "round-trip" and not r.get("stay_days"):
-        sys.exit(f"設定錯誤：「{name}」是來回票，要寫 stay_days（玩幾天）")
+        sys.exit(f"設定錯誤：「{name}」是來回票，要寫 stay_days（住幾晚）")
     adults, children, infants = int(r.get("adults", 1)), int(r.get("children", 0)), int(r.get("infants", 0))
     if adults < 1 or adults + children + infants > 9 or infants > adults:
         sys.exit(f"設定錯誤：「{name}」人數不對（至少 1 位大人、總共最多 9 人、嬰兒不能比大人多）")
@@ -451,7 +451,7 @@ def main() -> int:
         print("⏸ 全部暫停中，這次不查價")
     print(f"本次要查 {len(plan)} 筆（{now.astimezone(TW):%Y-%m-%d %H:%M} 台灣時間）")
     if len(plan) > 80:
-        print("⚠ 查詢數太多，可能被 Google 限制，建議減少日期或玩幾天的選項")
+        print("⚠ 查詢數太多，可能被 Google 限制，建議減少日期或住幾晚的選項")
 
     new_rows: list[dict] = []
     route_combos: dict[str, list[dict]] = defaultdict(list)
