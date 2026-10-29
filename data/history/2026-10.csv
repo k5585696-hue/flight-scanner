@@ -1,0 +1,5 @@
+time,route,depart,return,price,airline,stops
+2026-10-29T03:10Z,TPE-HKG-round-trip-economy-2p-0stop-1c-1i-2bag-h10-14,2027-03-27,2027-03-31,22904,香港快運航空,0
+2026-10-29T03:10Z,TPE-OSA-one-way-economy-1p-anystop,2027-02-04,,9076,菲律賓航空,1
+2026-10-29T03:10Z,TPE-OSA-one-way-economy-1p-anystop,2027-02-05,,10402,菲律賓航空,1
+2026-10-29T03:10Z,TPE-OSA-one-way-economy-1p-anystop,2027-02-07,,7970,菲律賓航空,1
