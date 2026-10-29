@@ -3,6 +3,10 @@ name: 機票掃描
 on:
   schedule:
     - cron: "7 * * * *"   # 每小時第 7 分執行（GitHub 尖峰時可能延遲幾分鐘）
+  push:                    # 在網頁上改航線（routes.json）或改 config.toml 後，馬上掃一次
+    paths:
+      - routes.json
+      - config.toml
   workflow_dispatch:       # 也可以在 Actions 頁面手動按 Run workflow
     inputs:
       test_email:
