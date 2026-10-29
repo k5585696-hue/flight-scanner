@@ -163,6 +163,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .tip .t { color: var(--ink-2); }
 
 .table-wrap { overflow-x: auto; margin-top: 10px; }
+.table-foot { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 13px; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12.5px; padding: 6px 10px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
 td { padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align: middle; white-space: nowrap; }
@@ -499,8 +500,35 @@ function lineChart(box, series, usual) {
   svg.querySelector(".hit").addEventListener("pointerleave", hide);
 }
 
-function comboRows(c, r) {
-  return r.combos.map(x => {
+// 出發日很多時預設收起來，只列最便宜的幾天；展開或收起會記在這台裝置
+const COLLAPSE_OVER = 5, SHOW_CHEAPEST = 3, OPEN_KEY = "flight-radar-open";
+const openRoutes = (() => { try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); } catch { return new Set(); } })();
+function setOpen(id, open) {
+  open ? openRoutes.add(id) : openRoutes.delete(id);
+  try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openRoutes])); } catch {}
+}
+
+function comboTable(c, r) {
+  const all = r.combos, many = all.length > COLLAPSE_OVER, open = openRoutes.has(c.id);
+  let rows = all, foot = "";
+  if (many && !open) {
+    const keep = new Set(all.filter(x => x.status === "ok").sort((a, b) => a.price - b.price).slice(0, SHOW_CHEAPEST));
+    all.forEach(x => { if (x.deal) keep.add(x); });
+    if (!keep.size) all.slice(0, SHOW_CHEAPEST).forEach(x => keep.add(x));
+    rows = all.filter(x => keep.has(x));
+    foot = `<span class="soft">只列出最便宜的 ${rows.length} 天（共 ${all.length} 個出發日）</span>` +
+      `<button class="btn small" data-act="toggle" data-id="${esc(c.id)}">▾ 顯示全部 ${all.length} 天</button>`;
+  } else if (many) {
+    foot = `<span class="soft">共 ${all.length} 個出發日</span>` +
+      `<button class="btn small" data-act="toggle" data-id="${esc(c.id)}">▴ 收起來</button>`;
+  }
+  return `<div class="combo-table"><div class="table-wrap"><table>
+    <thead><tr><th>出發</th>${c.trip === "round-trip" ? "<th>回程</th>" : ""}<th class="num">目前價格</th><th class="num">平常價</th><th class="num">差異</th><th>最便宜航班</th><th>近 ${D.alert.usual_days} 天</th><th></th></tr></thead>
+    <tbody>${comboRows(c, rows)}</tbody></table></div>${foot ? `<div class="table-foot">${foot}</div>` : ""}</div>`;
+}
+
+function comboRows(c, list) {
+  return list.map(x => {
     let price, diff = `<td class="num soft">—</td>`, info;
     const usual = `<td class="num soft">${x.usual ? money(x.usual) : "累積中"}</td>`;
     if (x.status === "ok") {
@@ -556,9 +584,7 @@ function renderRoute(c) {
     if (paused) {
       body = `<p class="state">⏸ ${c.paused ? "這條航線已暫停" : "目前全部暫停中"}，不會查價也不會寄信。${c.paused ? "按「▶ 恢復」就會繼續。" : ""}</p>` + (r.series.length ? chart : "");
     } else {
-      body = chart + `<div class="table-wrap"><table>
-        <thead><tr><th>出發</th>${c.trip === "round-trip" ? "<th>回程</th>" : ""}<th class="num">目前價格</th><th class="num">平常價</th><th class="num">差異</th><th>最便宜航班</th><th>近 ${D.alert.usual_days} 天</th><th></th></tr></thead>
-        <tbody>${comboRows(c, r)}</tbody></table></div>`;
+      body = chart + comboTable(c, r);
     }
   }
   el.innerHTML = head + `<div class="route-body">${body}</div>`;
@@ -885,6 +911,12 @@ $("#routes").addEventListener("click", e => {
   if (!b) return;
   const c = CFGS.find(x => x.id === b.dataset.id);
   if (!c) return;
+  if (b.dataset.act === "toggle") {
+    const open = !openRoutes.has(c.id), sec = b.closest(".route");
+    setOpen(c.id, open);
+    b.closest(".combo-table").outerHTML = comboTable(c, RESULTS[c.id]);
+    if (!open) sec.querySelector(".combo-table").scrollIntoView({ block: "nearest" });
+  }
   if (b.dataset.act === "edit") openEditor(c);
   if (b.dataset.act === "pause") {
     const next = !c.paused;
