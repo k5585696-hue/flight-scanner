@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>機票雷達</title>
+<meta name="description" content="每小時自動查詢機票價格，比平常便宜就寄信通知。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --hover: rgba(11, 11, 11, 0.035);
+  --series: #2a78d6;
+  --good: #0ca30c;
+  --good-text: #006300;
+  --good-wash: rgba(12, 163, 12, 0.10);
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --critical-wash: rgba(208, 59, 59, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --hover: rgba(255, 255, 255, 0.04);
+    --series: #3987e5;
+    --good-text: #0ca30c;
+    --good-wash: rgba(12, 163, 12, 0.16);
+    --critical-wash: rgba(208, 59, 59, 0.14);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --hover: rgba(255, 255, 255, 0.04);
+  --series: #3987e5;
+  --good-text: #0ca30c;
+  --good-wash: rgba(12, 163, 12, 0.16);
+  --critical-wash: rgba(208, 59, 59, 0.14);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif;
+}
+a { color: var(--series); text-decoration: none; }
+a:hover { text-decoration: underline; }
+main { max-width: 1080px; margin: 0 auto; padding: 28px 16px 48px; }
+
+header h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: 0.02em; }
+header .sub { color: var(--ink-2); margin: 0; }
+.status { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 14px 0 6px; font-size: 14px; color: var(--ink-2); }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; }
+.banner { margin: 14px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--critical-wash); color: var(--ink); font-size: 14px; }
+.rule { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+
+.route { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-top: 20px; }
+.route-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; }
+.route h2 { font-size: 18px; margin: 0; }
+.route .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.stat { text-align: right; }
+.stat .label { color: var(--ink-2); font-size: 13px; }
+.stat .value { font-size: 30px; font-weight: 600; line-height: 1.15; }
+.stat .detail { color: var(--ink-2); font-size: 13px; }
+@media (max-width: 560px) { .stat { text-align: left; } }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; background: var(--good-wash); color: var(--good-text); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+
+.chart { position: relative; margin: 18px 0 6px; }
+.chart-title { font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
+.chart svg { display: block; width: 100%; overflow: visible; touch-action: pan-y; }
+.chart .empty { color: var(--muted); font-size: 14px; padding: 24px 0; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.10); white-space: nowrap; display: none; z-index: 2; }
+.tip b { font-size: 14px; }
+.tip .t { color: var(--ink-2); }
+
+.table-wrap { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12.5px; padding: 6px 10px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
+td { padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align: middle; white-space: nowrap; }
+tbody tr:hover { background: var(--hover); }
+tr.deal td:first-child { box-shadow: inset 3px 0 0 var(--good); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td .price { font-weight: 600; }
+.down { color: var(--good-text); font-weight: 600; }
+.up, .soft { color: var(--muted); }
+.flight { color: var(--ink-2); font-size: 13px; }
+.err { color: var(--critical); font-size: 13px; }
+
+footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>✈️ 機票雷達</h1>
+    <p class="sub">每小時自動查一次 Google Flights，比平常便宜就寄信通知</p>
+    <div class="status" id="status"></div>
+    <p class="rule" id="rule"></p>
+    <div id="banner"></div>
+  </header>
+  <div id="routes"></div>
+  <footer>
+    價格為所有乘客的總價（含稅），資料來自 Google Flights，實際價格以航空公司或訂票網站為準。<br>
+    「平常價」= 同一個出發日在過去幾天查到的價格中位數；剛開始追蹤的前一天還在累積資料。<br>
+    排程由 GitHub Actions 執行，尖峰時段可能延遲幾分鐘到半小時。
+  </footer>
+</main>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById("data").textContent);
+const WEEK = "日一二三四五六";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = p => p == null ? "—" : (D.currency === "TWD" ? "NT$" : D.currency + " ") + p.toLocaleString("en-US");
+const day = s => { if (!s) return ""; const d = new Date(s + "T00:00:00Z"); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}（${WEEK[d.getUTCDay()]}）`; };
+const twParts = t => { const d = new Date((t + 8 * 3600) * 1000); return { M: d.getUTCMonth() + 1, D: d.getUTCDate(), h: d.getUTCHours(), m: d.getUTCMinutes() }; };
+const pad = n => String(n).padStart(2, "0");
+const stamp = t => { const p = twParts(t); return `${p.M}/${p.D} ${pad(p.h)}:${pad(p.m)}`; };
+
+function renderHeader() {
+  const fails = D.total - D.ok;
+  const color = D.total === 0 ? "var(--muted)" : D.ok === 0 ? "var(--critical)" : fails ? "var(--warning)" : "var(--good)";
+  const text = D.total === 0 ? "沒有要查的日期" : D.ok === 0 ? "✕ 全部查詢失敗" : fails ? `⚠ ${D.ok}/${D.total} 筆成功` : `✓ ${D.total} 筆查詢全部成功`;
+  const ago = Math.round((Date.now() / 1000 - D.generated) / 60);
+  const agoText = ago < 1 ? "剛剛" : ago < 60 ? `${ago} 分鐘前` : `${Math.floor(ago / 60)} 小時 ${ago % 60} 分前`;
+  document.getElementById("status").innerHTML =
+    `<span>最後更新 ${stamp(D.generated)}（台灣時間，${agoText}）</span>` +
+    `<span class="pill"><span class="dot" style="background:${color}"></span>${text}</span>`;
+  document.getElementById("rule").textContent =
+    `通知條件：比過去 ${D.alert.usual_days} 天的平常價便宜 ${D.alert.drop_percent}% 以上，或低於你設定的價格。`;
+  if (ago > 180) {
+    document.getElementById("banner").innerHTML = `<div class="banner">⚠ 已經超過 ${Math.floor(ago / 60)} 小時沒有更新，請到 GitHub 的 Actions 頁面看看排程是否正常。</div>`;
+  } else if (D.total && D.ok === 0) {
+    document.getElementById("banner").innerHTML = `<div class="banner">✕ 這次全部查詢失敗，可能是 Google 暫時擋住，下次整點會再試。連續 6 小時失敗會寄信通知你。</div>`;
+  }
+}
+
+function flightText(f) {
+  if (!f) return "";
+  const stops = f.stops ? `轉機 ${f.stops} 次（${f.via.join("、")}）` : "直飛";
+  return `${esc(f.airline)} · ${f.dep}→${f.arr}${f.arr_plus ? "+" + f.arr_plus : ""} · ${stops}`;
+}
+
+function sparkline(points) {
+  if (!points || points.length < 2) return `<span class="soft">累積中</span>`;
+  const W = 96, H = 26, P = 3;
+  const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const X = t => P + (x1 === x0 ? (W - 2 * P) : (t - x0) / (x1 - x0) * (W - 2 * P));
+  const Y = v => y1 === y0 ? H / 2 : P + (1 - (v - y0) / (y1 - y0)) * (H - 2 * P);
+  const d = points.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+  const last = points[points.length - 1];
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-label="價格走勢"><title>最低 ${money(y0)}，最高 ${money(y1)}</title>` +
+    `<path d="${d}" fill="none" stroke="var(--series)" stroke-opacity="0.45" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `<circle cx="${X(last[0])}" cy="${Y(last[1])}" r="3" fill="var(--series)" stroke="var(--surface)" stroke-width="1.5"/></svg>`;
+}
+
+function niceTicks(min, max, count = 4) {
+  if (min === max) { min -= 500; max += 500; }
+  const raw = (max - min) / count, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw);
+  const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v));
+  return { lo, hi, ticks };
+}
+
+function timeTicks(t0, t1, maxTicks) {
+  const steps = [1, 2, 3, 6, 12, 24, 48, 72, 168].map(h => h * 3600);
+  const step = steps.find(s => (t1 - t0) / s <= maxTicks) || steps[steps.length - 1];
+  const out = [];
+  for (let t = Math.ceil((t0 + 8 * 3600) / step) * step - 8 * 3600; t <= t1; t += step) out.push(t);
+  return { ticks: out, daily: step >= 86400 };
+}
+
+function lineChart(box, series, usual) {
+  const svgNS = "http://www.w3.org/2000/svg";
+  const tip = box.querySelector(".tip");
+  const holder = box.querySelector(".plot");
+  if (!series.length) { holder.innerHTML = `<div class="empty">還沒有價格紀錄，第一次掃描完成後就會出現。</div>`; return; }
+
+  const W = holder.clientWidth || 600, H = 200, m = { l: 52, r: 74, t: 14, b: 26 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const ys = series.map(p => p[1]).concat(usual ? [usual] : []);
+  const yt = niceTicks(Math.min(...ys), Math.max(...ys));
+  let t0 = series[0][0], t1 = series[series.length - 1][0];
+  if (t1 - t0 < 6 * 3600) { t0 -= 3 * 3600; t1 += 3 * 3600; }
+  const X = t => m.l + (t - t0) / (t1 - t0) * iw;
+  const Y = v => m.t + (1 - (v - yt.lo) / (yt.hi - yt.lo)) * ih;
+
+  let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="最低價走勢">`;
+  for (const v of yt.ticks) {
+    s += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="${v === yt.lo ? "var(--axis)" : "var(--grid)"}" stroke-width="1"/>`;
+    s += `<text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end" font-size="11.5" fill="var(--muted)" style="font-variant-numeric:tabular-nums">${v.toLocaleString("en-US")}</text>`;
+  }
+  const xt = timeTicks(t0, t1, Math.max(2, Math.floor(iw / 80)));
+  for (const t of xt.ticks) {
+    const p = twParts(t);
+    const label = xt.daily || (p.h === 0) ? `${p.M}/${p.D}` : `${pad(p.h)}:00`;
+    s += `<text x="${X(t)}" y="${H - 6}" text-anchor="middle" font-size="11.5" fill="var(--muted)">${label}</text>`;
+  }
+  if (usual) {
+    s += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(usual)}" y2="${Y(usual)}" stroke="var(--muted)" stroke-width="1"/>`;
+    s += `<text x="${m.l + iw + 6}" y="${Y(usual) + 4}" font-size="11.5" fill="var(--ink-2)">平常 ${usual.toLocaleString("en-US")}</text>`;
+  }
+  // 中間漏掉超過 3 小時的掃描就斷開線段
+  let d = "";
+  series.forEach((p, i) => { d += `${i && p[0] - series[i - 1][0] <= 3 * 3600 ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`; });
+  s += `<path d="${d}" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (series.length === 1 || series.some((p, i) => i && p[0] - series[i - 1][0] > 3 * 3600)) {
+    for (const p of series) s += `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="2" fill="var(--series)"/>`;
+  }
+  const last = series[series.length - 1];
+  const nearUsual = usual && Math.abs(Y(usual) - Y(last[1])) < 14;
+  s += `<circle cx="${X(last[0])}" cy="${Y(last[1])}" r="4" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/>`;
+  s += `<text x="${m.l + iw + 6}" y="${Y(last[1]) + (nearUsual ? (Y(last[1]) < Y(usual) ? -4 : 14) : 4)}" font-size="12" font-weight="600" fill="var(--ink)">${last[1].toLocaleString("en-US")}</text>`;
+  s += `<line class="cross" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--axis)" stroke-width="1" visibility="hidden"/>`;
+  s += `<circle class="hdot" r="4.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>`;
+  s += `<rect class="hit" x="${m.l}" y="0" width="${iw}" height="${H}" fill="transparent"/></svg>`;
+  holder.innerHTML = s;
+
+  const svg = holder.querySelector("svg"), cross = svg.querySelector(".cross"), hdot = svg.querySelector(".hdot");
+  const hide = () => { cross.setAttribute("visibility", "hidden"); hdot.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+  svg.querySelector(".hit").addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect();
+    const t = t0 + ((e.clientX - r.left) * (W / r.width) - m.l) / iw * (t1 - t0);
+    let lo = 0, hi = series.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; series[mid][0] < t ? lo = mid : hi = mid; }
+    const p = Math.abs(series[lo][0] - t) <= Math.abs(series[hi][0] - t) ? series[lo] : series[hi];
+    const x = X(p[0]), y = Y(p[1]);
+    cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
+    hdot.setAttribute("cx", x); hdot.setAttribute("cy", y); hdot.setAttribute("visibility", "visible");
+    const diff = usual ? Math.round((p[1] - usual) / usual * 100) : null;
+    tip.innerHTML = `<div class="t">${stamp(p[0])}</div><b>${money(p[1])}</b>` +
+      (diff != null ? ` <span class="${diff < 0 ? "down" : "up"}">${diff < 0 ? "▼" : diff > 0 ? "▲" : ""}${Math.abs(diff)}%</span>` : "");
+    tip.style.display = "block";
+    const scale = r.width / W, tw = tip.offsetWidth;
+    let left = x * scale + 12;
+    if (left + tw > r.width) left = x * scale - tw - 12;
+    tip.style.left = `${Math.max(0, left)}px`;
+    tip.style.top = `${Math.max(0, y * scale - 52) + 22}px`;
+  });
+  svg.querySelector(".hit").addEventListener("pointerleave", hide);
+}
+
+function renderRoute(r) {
+  const el = document.createElement("section");
+  el.className = "route";
+  const trip = r.trip === "round-trip" ? "來回" : "單程";
+  const stops = r.max_stops === 0 ? "只看直飛" : r.max_stops == null ? "不限轉機" : `最多轉機 ${r.max_stops} 次`;
+  const meta = [`${r.from} → ${r.to}`, trip, `${r.adults} 位成人`, stops, r.alert_below ? `低於 ${money(r.alert_below)} 必通知` : ""].filter(Boolean).join(" · ");
+
+  let stat = "";
+  const c = r.cheapest;
+  if (c) {
+    const when = day(c.depart) + (c.return ? ` → ${day(c.return)}` : "");
+    stat = `<div class="stat"><div class="label">目前最便宜</div><div class="value">${money(c.price)}</div>` +
+      `<div class="detail">${when}${c.deal ? ' <span class="badge">▼ 便宜</span>' : ""}</div></div>`;
+  }
+
+  let body;
+  if (!r.has_dates) {
+    body = `<p class="soft">這組日期都已經過了，請到 config.toml 更新出發日期。</p>`;
+  } else {
+    const rows = r.combos.map(x => {
+      let price, usual = `<td class="num soft">${x.usual ? money(x.usual) : "累積中"}</td>`, diff = `<td class="num soft">—</td>`, info;
+      if (x.status === "ok") {
+        price = `<td class="num"><span class="price">${money(x.price)}</span></td>`;
+        if (x.drop != null) {
+          const d = Math.round(x.drop);
+          const text = d > 0 ? `▼ ${d}%` : d < 0 ? `▲ ${-d}%` : "持平";
+          diff = `<td class="num"><span class="${d >= 5 ? "down" : "up"}">${text}</span></td>`;
+        }
+        info = `<td class="flight">${x.deal ? '<span class="badge">▼ 便宜</span> ' : ""}${flightText(x.flights[0])}</td>`;
+      } else if (x.status === "none") {
+        price = `<td class="num soft">沒有航班</td>`; info = `<td class="flight soft">—</td>`;
+      } else {
+        price = `<td class="num"><span class="err">查詢失敗</span></td>`; info = `<td class="err" title="${esc(x.error)}">下次整點會再試</td>`;
+      }
+      return `<tr class="${x.deal ? "deal" : ""}"><td>${day(x.depart)}</td>${r.trip === "round-trip" ? `<td>${day(x.return)}</td>` : ""}` +
+        `${price}${usual}${diff}${info}<td>${sparkline(x.spark)}</td>` +
+        `<td><a href="${esc(x.url)}" target="_blank" rel="noopener">訂票 ↗</a></td></tr>`;
+    }).join("");
+    body = `
+      <div class="chart"><div class="chart-title">最低價走勢（所有出發日中最便宜的一筆，單位 ${esc(D.currency)}）</div><div class="plot"></div><div class="tip"></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>出發</th>${r.trip === "round-trip" ? "<th>回程</th>" : ""}<th class="num">目前價格</th><th class="num">平常價</th><th class="num">差異</th><th>最便宜航班</th><th>近 ${D.alert.usual_days} 天</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+  }
+
+  el.innerHTML = `<div class="route-head"><div><h2>${esc(r.name)}</h2><div class="meta">${esc(meta)}</div></div>${stat}</div>${body}`;
+  document.getElementById("routes").appendChild(el);
+  const box = el.querySelector(".chart");
+  if (box) {
+    const draw = () => lineChart(box, r.series, r.usual);
+    draw();
+    let w = box.clientWidth;
+    new ResizeObserver(() => { if (box.clientWidth !== w) { w = box.clientWidth; draw(); } }).observe(box);
+  }
+}
+
+renderHeader();
+if (!D.routes.length) document.getElementById("routes").innerHTML = `<p class="soft">config.toml 裡還沒有設定任何航線。</p>`;
+D.routes.forEach(renderRoute);
+setInterval(renderHeader, 60000);
+// 網頁開著放很久，切回來時如果資料已經過期就重新載入
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && Date.now() / 1000 - D.generated > 65 * 60) location.reload();
+});
+</script>
+</body>
+</html>
