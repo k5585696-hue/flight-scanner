@@ -25,6 +25,28 @@
       ],
       "alert_below": null,
       "paused": false
+    },
+    {
+      "id": "rmvsz3oxk",
+      "name": "台北 → 名古屋",
+      "from": "TPE",
+      "to": "NGO",
+      "trip": "round-trip",
+      "depart": [
+        "2027-03-14..2027-04-02"
+      ],
+      "stay_days": [
+        4
+      ],
+      "adults": 2,
+      "children": 1,
+      "infants": 1,
+      "seat": "economy",
+      "max_stops": null,
+      "checked_bags": 2,
+      "depart_hours": null,
+      "alert_below": null,
+      "paused": false
     }
   ]
 }
