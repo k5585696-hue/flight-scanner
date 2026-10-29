@@ -1,0 +1,50 @@
+{
+  "paused": false,
+  "routes": [
+    {
+      "id": "r1",
+      "name": "台北 → 香港3月",
+      "from": "TPE",
+      "to": "HKG",
+      "trip": "round-trip",
+      "depart": [
+        "2027-03-27"
+      ],
+      "stay_days": [
+        4
+      ],
+      "adults": 2,
+      "children": 1,
+      "infants": 1,
+      "seat": "economy",
+      "max_stops": 0,
+      "checked_bags": 2,
+      "depart_hours": [
+        10,
+        14
+      ],
+      "alert_below": null,
+      "paused": false
+    },
+    {
+      "id": "r2",
+      "name": "台北 → 大阪 春節單程",
+      "from": "TPE",
+      "to": "OSA",
+      "trip": "one-way",
+      "depart": [
+        "2027-02-04..2027-02-07"
+      ],
+      "stay_days": [],
+      "adults": 1,
+      "children": 0,
+      "infants": 0,
+      "seat": "economy",
+      "max_stops": null,
+      "checked_bags": 0,
+      "depart_hours": null,
+      "alert_below": null,
+      "paused": false
+    }
+  ]
+}
