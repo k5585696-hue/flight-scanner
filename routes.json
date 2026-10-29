@@ -44,7 +44,10 @@
       "seat": "economy",
       "max_stops": null,
       "checked_bags": 2,
-      "depart_hours": null,
+      "depart_hours": [
+        8,
+        15
+      ],
       "alert_below": null,
       "paused": false
     }
