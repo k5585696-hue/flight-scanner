@@ -32,6 +32,8 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}   # 取分支最新版本（含前一次掃描存的紀錄），連續存檔時才不會衝突
 
       - uses: actions/setup-python@v6
         with:
