@@ -47,6 +47,28 @@
       "depart_hours": null,
       "alert_below": null,
       "paused": false
+    },
+    {
+      "id": "rmvszxuf8",
+      "name": "台北 → 東京",
+      "from": "TPE",
+      "to": "TYO",
+      "trip": "round-trip",
+      "depart": [
+        "2027-04-01..2027-05-07"
+      ],
+      "stay_days": [
+        4
+      ],
+      "adults": 2,
+      "children": 1,
+      "infants": 1,
+      "seat": "economy",
+      "max_stops": null,
+      "checked_bags": 3,
+      "depart_hours": null,
+      "alert_below": null,
+      "paused": false
     }
   ]
 }
