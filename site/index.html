@@ -174,7 +174,7 @@ td .price { font-weight: 600; }
 .down { color: var(--good-text); font-weight: 600; }
 .up, .soft { color: var(--muted); }
 .flight { color: var(--ink-2); font-size: 13px; }
-.flight .sub { color: var(--muted); font-size: 12px; }
+.flight .sub, td .sub { color: var(--muted); font-size: 12px; font-weight: 400; }
 .err { color: var(--critical); font-size: 13px; }
 
 dialog { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--ink); max-width: 560px; width: calc(100% - 32px); padding: 22px; }
@@ -290,6 +290,10 @@ const day = s => { if (!s) return ""; const d = new Date(s + "T00:00:00Z"); retu
 const md = s => { const d = new Date(s + "T00:00:00Z"); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
 const twParts = t => { const d = new Date((t + 8 * 3600) * 1000); return { M: d.getUTCMonth() + 1, D: d.getUTCDate(), h: d.getUTCHours(), m: d.getUTCMinutes() }; };
 const stamp = t => { const p = twParts(t); return `${p.M}/${p.D} ${pad(p.h)}:${pad(p.m)}`; };
+const ago = t => {
+  const m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60));
+  return m < 60 ? `${m} 分鐘前` : m < 48 * 60 ? `${Math.round(m / 60)} 小時前` : `${Math.round(m / 1440)} 天前`;
+};
 const todayTW = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400e3);
@@ -516,7 +520,8 @@ function comboTable(c, r) {
     all.forEach(x => { if (x.deal) keep.add(x); });
     if (!keep.size) all.slice(0, SHOW_CHEAPEST).forEach(x => keep.add(x));
     rows = all.filter(x => keep.has(x));
-    foot = `<span class="soft">只列出最便宜的 ${rows.length} 天（共 ${all.length} 個出發日）</span>` +
+    const failed = all.filter(x => x.status === "error").length;
+    foot = `<span class="soft">只列出最便宜的 ${rows.length} 天（共 ${all.length} 個出發日${failed ? `，這次有 ${failed} 天查詢失敗` : ""}）</span>` +
       `<button class="btn small" data-act="toggle" data-id="${esc(c.id)}">▾ 顯示全部 ${all.length} 天</button>`;
   } else if (many) {
     foot = `<span class="soft">共 ${all.length} 個出發日</span>` +
@@ -541,6 +546,9 @@ function comboRows(c, list) {
       info = `<td class="flight">${x.deal ? '<span class="badge">▼ 便宜</span> ' : ""}${flightText(x.flights[0])}</td>`;
     } else if (x.status === "none") {
       price = `<td class="num soft">沒有航班</td>`; info = `<td class="flight soft">—</td>`;
+    } else if (x.last) {  // 這次失敗：顯示上次查到的價格（灰色），不要空白
+      price = `<td class="num"><span class="soft">${money(x.last.price)}</span><div class="sub">${ago(x.last.t)}查到</div></td>`;
+      info = `<td class="flight" title="${esc(x.error)}"><span class="err">這次查詢失敗</span>，先顯示上次的價格<div class="sub">${esc(x.last.airline)}・下次整點會再試</div></td>`;
     } else {
       price = `<td class="num"><span class="err">查詢失敗</span></td>`; info = `<td class="err" title="${esc(x.error)}">下次整點會再試</td>`;
     }

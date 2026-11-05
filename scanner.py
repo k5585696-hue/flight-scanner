@@ -387,26 +387,37 @@ class Fetcher:
 
     def __init__(self, language: str):
         self.language, self.browser, self.broken = language, None, False
+        # 每次掃描的統計，寫進網頁資料（data.json 的 diag），不用登入 GitHub 就看得到問題出在哪
+        self.stats = {"browser": "未使用", "瀏覽器完整": 0, "瀏覽器不完整": 0, "瀏覽器失敗": 0,
+                      "直接下載補上": 0, "兩邊都沒結果": 0, "瀏覽器失敗原因": {}}
 
     def _get_browser(self) -> Browser | None:
         if self.browser is None and not self.broken:
             try:
                 self.browser = Browser(self.language)
+                self.stats["browser"] = "正常"
             except Exception as e:
                 self.broken = True
+                self.stats["browser"] = f"無法啟動：{str(e)[:120]}"
                 print(f"⚠ 無法啟動瀏覽器，改用直接下載網頁（多人查詢的結果可能不完整）：{e}")
         return self.browser
 
     def fetch(self, query) -> list[Itinerary]:
         valid = lambda fl: [f for f in fl if f.price and f.price > 0]
-        flights, complete, browser_used = [], False, False
+        st = self.stats
+        flights, complete, browser_used, why = [], False, False, ""
         if browser := self._get_browser():
             browser_used = True
             try:
                 flights, complete = browser.fetch(query.url())
+                st["瀏覽器完整" if complete else "瀏覽器不完整"] += 1
+                why = "" if complete else f"瀏覽器沒等到搜尋完成（收到 {len(flights)} 筆）"
             except Exception as e:
                 # Google 有時會拒絕自動化的查詢（代碼 13）；不重試硬查，直接改用另一種方法
-                print(f"    瀏覽器這次沒拿到結果（{type(e).__name__}: {str(e)[:60]}），改用直接下載")
+                why = str(e)[:80]
+                st["瀏覽器失敗"] += 1
+                st["瀏覽器失敗原因"][why] = st["瀏覽器失敗原因"].get(why, 0) + 1
+                print(f"    瀏覽器這次沒拿到結果（{type(e).__name__}: {why}），改用直接下載")
         if complete and flights:
             return valid(flights)
         # 瀏覽器出錯、沒找到或沒等到搜尋完成：用直接下載的結果補上（兩邊都是同一個搜尋條件的真實航班）
@@ -418,7 +429,10 @@ class Fetcher:
             raise
         if browser_used and not (flights or extra or complete):
             # 分不出是真的沒航班、還是 Google 拒絕了這次查詢 → 當作查詢失敗，不要顯示「沒有航班」
-            raise RuntimeError("Google 這次沒有回傳結果（可能查詢太頻繁），下次整點會再試")
+            st["兩邊都沒結果"] += 1
+            raise RuntimeError(f"Google 這次沒有回傳結果（{why or '瀏覽器沒有航班'}；直接下載也是 0 筆），下次整點會再試")
+        if extra:
+            st["直接下載補上"] += 1
         if flights and not complete:
             print(f"    （Google 沒在時間內搜尋完，用目前收到的 {len(flights)} 個航班＋直接下載的 {len(extra)} 個）")
         merged: dict[tuple, Itinerary] = {}
@@ -674,7 +688,10 @@ def main() -> int:
             flights = fetcher.fetch(query)
             ok += 1
         except Exception as e:
-            combo.update(status="error", error=f"{type(e).__name__}: {e}"[:200])
+            combo.update(status="error", error=(str(e) if isinstance(e, RuntimeError) else f"{type(e).__name__}: {e}")[:200])
+            if past:  # 網頁上改顯示上次查到的價格，不要空白
+                last = max(past, key=lambda r: r["t"])
+                combo["last"] = {"price": last["price"], "t": int(last["t"].timestamp()), "airline": last["airline"]}
             print(f"  ✗ {label}：查詢失敗 {combo['error']}")
             route_combos[route.id].append(combo)
             continue
@@ -758,14 +775,15 @@ def main() -> int:
         mail_ok = send_mail("✅ 機票雷達測試信", mail_frame("Email 設定成功", body, site_url), "Email 設定成功！") and mail_ok
 
     save_state(state)
-    build_site(routes, route_combos, all_rows, active_keys, alert, bag_fees, cur, now, ok, len(plan), all_paused)
+    print("查詢統計：", json.dumps(fetcher.stats, ensure_ascii=False))
+    build_site(routes, route_combos, all_rows, active_keys, alert, bag_fees, cur, now, ok, len(plan), all_paused, fetcher.stats)
     print(f"完成：成功 {ok}/{len(plan)}，寄出通知 {len(to_mail)} 筆")
     return 0 if mail_ok else 1
 
 
 # ---------- 網頁 ----------
 
-def build_site(routes, route_combos, all_rows, active_keys, alert, bag_fees, cur, now, ok, total, all_paused) -> None:
+def build_site(routes, route_combos, all_rows, active_keys, alert, bag_fees, cur, now, ok, total, all_paused, diag=None) -> None:
     usual_since = now - timedelta(days=alert["usual_days"])
     today = now.astimezone(TW).date()
     out_routes = []
@@ -790,7 +808,7 @@ def build_site(routes, route_combos, all_rows, active_keys, alert, bag_fees, cur
         })
 
     payload = {
-        "generated": int(now.timestamp()), "ok": ok, "total": total, "currency": cur,
+        "generated": int(now.timestamp()), "ok": ok, "total": total, "currency": cur, "diag": diag or {},
         "paused": all_paused, "repo": os.environ.get("GITHUB_REPOSITORY", ""),
         "alert": alert, "bag_fees": bag_fees, "routes": out_routes,
     }
