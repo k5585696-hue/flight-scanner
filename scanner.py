@@ -11,6 +11,7 @@ import csv
 import json
 import os
 import random
+import re
 import smtplib
 import statistics
 import sys
@@ -24,7 +25,6 @@ from html import escape
 from pathlib import Path
 
 from fast_flights import FlightQuery, FlightsNotFound, Passengers, create_query, fetch_flights_html
-from fast_flights.parser import parse_js
 from selectolax.lexbor import LexborHTMLParser
 
 ROOT = Path(__file__).resolve().parent
@@ -96,6 +96,8 @@ class Route:
             key += f"-{self.checked_bags}bag"
         if self.depart_hours:
             key += "-h%d-%d" % self.depart_hours
+        if self.adults + self.children + self.infants > 1:
+            key += "-v2"  # 2026-11 起多人改用瀏覽器查價；之前的紀錄不完整，平常價重新累積
         return key
 
     def combos(self, today: date) -> list[tuple[date, date | None]]:
@@ -205,51 +207,248 @@ def build_query(cfg: dict, route: Route, dep: date, ret: date | None):
     )
 
 
-def segment_numbers(item) -> list[tuple[str, str]]:
-    """每一段的 (航空公司代碼, 航班號碼)，例如 ("IT", "IT210")。"""
-    try:
-        return [(seg[22][0], f"{seg[22][0]}{seg[22][1]}") for seg in item[0][2]]
-    except (IndexError, TypeError):
-        return []
+@dataclass
+class Segment:
+    frm: str
+    to: str
+    dep: tuple[int, int]        # (時, 分)
+    arr: tuple[int, int]
+    dep_date: tuple[int, int, int]
+    arr_date: tuple[int, int, int]
+    num: str                    # 航班號碼，例如 IT210
+    code: str                   # 航空公司代碼，例如 IT
 
 
-def parse_all(html: str) -> list:
-    """fast-flights 3.1 只讀 Google 的「其他航班」清單，會漏掉「最佳航班」（常常就是最便宜的），這裡兩個都讀。"""
+@dataclass
+class Itinerary:
+    price: int | None
+    type: str                   # 航空公司代碼；不同航空轉機時是 "multi"
+    airlines: list[str]
+    segs: list[Segment]
+
+
+def _hm(v) -> tuple[int, int]:
+    """Google 省略 0：[8] = 08:00、[None, 31] = 00:31。"""
+    padded = [*(v or []), None, None]
+    return padded[0] or 0, padded[1] or 0
+
+
+def parse_items(payload: list) -> list[Itinerary]:
+    """Google 的航班資料 → 航班清單。2 = 最佳航班、3 = 其他航班
+    （fast-flights 3.1 只讀 3，會漏掉常常最便宜的「最佳航班」，所以自己讀）。"""
+    out = []
+    for idx in (2, 3):
+        block = payload[idx] if len(payload) > idx else None
+        for k in (block[0] if isinstance(block, list) and block and block[0] else []):
+            try:
+                f = k[0]
+                segs = [Segment(s[3], s[6], _hm(s[8]), _hm(s[10]), tuple(s[20]), tuple(s[21]),
+                                f"{s[22][0]}{s[22][1]}", s[22][0]) for s in f[2]]
+                out.append(Itinerary(k[1][0][1], f[0], f[1] or [], segs))
+            except (IndexError, TypeError):
+                continue  # 這一筆格式不一樣（例如沒有價格），跳過
+    return out
+
+
+def parse_html(html: str) -> list[Itinerary]:
+    """直接下載的網頁：航班資料在 ds:1 這段 script 裡。"""
     script = LexborHTMLParser(html).css_first(r"script.ds\:1")
     if script is None:
         raise RuntimeError("Google 回傳的頁面沒有航班資料（可能被暫時擋住或網頁改版）")
     data = script.text().split("data:", 1)[1].rsplit(",", 1)[0]
     if data.endswith("errorHasStatus: true"):
         raise FlightsNotFound("no flights found")
-    payload = json.loads(data)
-    flights = []
-    for idx in (2, 3):  # 2 = 最佳航班, 3 = 其他航班
-        if len(payload) > idx and payload[idx] and payload[idx][0]:
-            p = list(payload)
-            p[3] = payload[idx]  # parse_js 只讀 payload[3]
-            parsed = parse_js("data:" + json.dumps(p) + ",")
-            for f, item in zip(parsed, payload[idx][0]):
-                f.segments = segment_numbers(item)
-            flights += parsed
-    return flights
+    return parse_items(json.loads(data))
 
 
-def fetch(query) -> list:
-    for attempt in range(3):
+def parse_rpc(text: str) -> tuple[list[Itinerary], bool]:
+    """瀏覽器裡 GetShoppingResults 的回應：一段一段串流送來，每段都是更完整的清單。
+    回傳 (航班, 是否完整)；Google 搜尋完成後送的那幾段，最後多了 [31] = true。"""
+    decoder, size_line = json.JSONDecoder(), re.compile(r"\s*\d+\s*\n")
+    pos, payloads = (text.find("\n") + 1 if text.startswith(")]}'") else 0), []
+    while m := size_line.match(text, pos):
         try:
-            return [f for f in parse_all(fetch_flights_html(query)) if f.price and f.price > 0]
-        except FlightsNotFound:
-            return []
+            chunk, pos = decoder.raw_decode(text, m.end())
+        except json.JSONDecodeError:
+            break  # 最後一段還沒傳完
+        for e in chunk:
+            if not (isinstance(e, list) and len(e) > 2 and e[0] == "wrb.fr"):
+                continue
+            if isinstance(e[2], str):
+                payloads.append(json.loads(e[2]))
+            elif len(e) > 5 and e[5]:  # Google 回錯誤（例如查太快時的代碼 13），不是「沒有航班」
+                raise RuntimeError(f"Google 回傳錯誤（代碼 {e[5][0]}）")
+    complete = [p for p in payloads if len(p) > 31 and p[31] is True]
+    if complete:
+        return parse_items(complete[-1]), True
+    for p in reversed(payloads):
+        if items := parse_items(p):
+            return items, False
+    return [], False
+
+
+# 在網頁裡攔 GetShoppingResults，邊收邊存到 window.__gsr（瀏覽器本身的回應暫存不可靠，串流也可能很久才結束）
+GSR_HOOK = """
+(() => {
+  const list = window.__gsr = [];
+  const f = window.fetch;
+  window.fetch = async function (input) {
+    const res = await f.apply(this, arguments);
+    const u = typeof input === "string" ? input : (input && input.url) || "";
+    if (String(u).includes("GetShoppingResults") && res.body) {
+      const rec = { text: "", done: false };
+      list.push(rec);
+      const reader = res.clone().body.getReader(), dec = new TextDecoder();
+      (async () => {
+        try { for (;;) { const { value, done } = await reader.read(); if (done) break; rec.text += dec.decode(value, { stream: true }); } }
+        catch (e) {}
+        rec.done = true;
+      })();
+    }
+    return res;
+  };
+  const open = XMLHttpRequest.prototype.open, send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function (m, u) { this.__gsr = String(u).includes("GetShoppingResults"); return open.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function () {
+    if (this.__gsr) {
+      const xhr = this, rec = { text: "", done: false };
+      list.push(rec);
+      const grab = () => { try { rec.text = xhr.responseText || rec.text; } catch (e) {} };
+      xhr.addEventListener("progress", grab);
+      xhr.addEventListener("loadend", () => { grab(); rec.done = true; });
+    }
+    return send.apply(this, arguments);
+  };
+})();
+"""
+
+
+class Browser:
+    """用無頭瀏覽器開 Google Flights。
+    多人（大人＋小孩＋嬰兒）時，Google 直接回傳的網頁常常還沒有航班，要等網頁裡的 JavaScript
+    再去要一次（GetShoppingResults）才拿得到；所以用真的瀏覽器開，讀那次回應。"""
+
+    CHANNELS = ("chrome", "msedge", None)  # GitHub 主機有 Chrome、Windows 有 Edge；None = Playwright 自帶的 Chromium
+
+    def __init__(self, language: str):
+        from playwright.sync_api import sync_playwright
+        self._pw = sync_playwright().start()
+        channels = [os.environ["BROWSER_CHANNEL"]] if os.environ.get("BROWSER_CHANNEL") else self.CHANNELS
+        err = None
+        for ch in channels:
+            try:
+                self._browser = self._pw.chromium.launch(channel=ch, headless=True)
+                break
+            except Exception as e:
+                err = e
+        else:
+            self._pw.stop()
+            raise RuntimeError(f"找不到可以用的瀏覽器：{err}")
+        # 不要用 page.route 擋圖片：攔截請求會讓 GetShoppingResults 讀不到
+        self._page = self._browser.new_page(locale=language)
+        self._page.add_init_script(GSR_HOOK)
+
+    def fetch(self, url: str, timeout: float = 40) -> tuple[list[Itinerary], bool]:
+        """等到 Google 說搜尋完成（或串流結束）。時間到就用目前收到最完整的一段。回傳 (航班, 是否完整)。"""
+        self._page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        start = changed = parsed_time = time.time()
+        seen = parsed_at = -1
+        flights, complete = [], False
+        while time.time() - start < timeout:
+            info = self._page.evaluate("window.__gsr.length ? [window.__gsr[0].done, window.__gsr[0].text.length] : null")
+            if info:
+                done, n = info
+                if n != seen:
+                    seen, changed = n, time.time()
+                # 有新資料時，每 3 秒或停下來 1 秒就檢查一次完成了沒（每次都解析很耗時）
+                if n != parsed_at and (done or time.time() - changed > 1 or time.time() - parsed_time > 3):
+                    flights, complete = parse_rpc(self._page.evaluate("window.__gsr[0].text"))
+                    parsed_at, parsed_time = n, time.time()
+                    if complete:
+                        return flights, True
+                    if done:  # 串流結束了卻沒有「搜尋完成」：當作不完整
+                        return flights, False
+            self._page.wait_for_timeout(300)
+        if seen <= 0:
+            raise RuntimeError("等不到 Google 的查詢結果")
+        if parsed_at != seen:
+            flights, complete = parse_rpc(self._page.evaluate("window.__gsr[0].text"))
+        return flights, complete
+
+    def close(self) -> None:
+        try:
+            self._browser.close()
+        finally:
+            self._pw.stop()
+
+
+class Fetcher:
+    """查一筆：先用瀏覽器（結果完整）；瀏覽器開不起來或出錯，就改用直接下載網頁（舊方法，多人時可能不完整）。"""
+
+    def __init__(self, language: str):
+        self.language, self.browser, self.broken = language, None, False
+
+    def _get_browser(self) -> Browser | None:
+        if self.browser is None and not self.broken:
+            try:
+                self.browser = Browser(self.language)
+            except Exception as e:
+                self.broken = True
+                print(f"⚠ 無法啟動瀏覽器，改用直接下載網頁（多人查詢的結果可能不完整）：{e}")
+        return self.browser
+
+    def fetch(self, query) -> list[Itinerary]:
+        valid = lambda fl: [f for f in fl if f.price and f.price > 0]
+        flights, complete, browser_used = [], False, False
+        if browser := self._get_browser():
+            browser_used = True
+            try:
+                flights, complete = browser.fetch(query.url())
+            except Exception as e:
+                # Google 有時會拒絕自動化的查詢（代碼 13）；不重試硬查，直接改用另一種方法
+                print(f"    瀏覽器這次沒拿到結果（{type(e).__name__}: {str(e)[:60]}），改用直接下載")
+        if complete and flights:
+            return valid(flights)
+        # 瀏覽器出錯、沒找到或沒等到搜尋完成：用直接下載的結果補上（兩邊都是同一個搜尋條件的真實航班）
+        try:
+            extra = self._static(query)
         except Exception:
-            if attempt == 2:
-                raise
-            time.sleep(5 * (attempt + 1))
-    return []
+            if flights or complete:
+                return valid(flights)
+            raise
+        if browser_used and not (flights or extra or complete):
+            # 分不出是真的沒航班、還是 Google 拒絕了這次查詢 → 當作查詢失敗，不要顯示「沒有航班」
+            raise RuntimeError("Google 這次沒有回傳結果（可能查詢太頻繁），下次整點會再試")
+        if flights and not complete:
+            print(f"    （Google 沒在時間內搜尋完，用目前收到的 {len(flights)} 個航班＋直接下載的 {len(extra)} 個）")
+        merged: dict[tuple, Itinerary] = {}
+        for f in valid(flights) + valid(extra):
+            key = tuple((s.num, s.dep_date, s.dep) for s in f.segs)
+            if key not in merged or f.price < merged[key].price:
+                merged[key] = f
+        return list(merged.values())
+
+    @staticmethod
+    def _static(query) -> list[Itinerary]:
+        for attempt in range(3):
+            try:
+                return parse_html(fetch_flights_html(query))
+            except FlightsNotFound:
+                return []
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(5 * (attempt + 1))
+        return []
+
+    def close(self) -> None:
+        if self.browser:
+            self.browser.close()
 
 
-def summarize(f, route: Route, bag_fees: dict[str, int]) -> dict:
-    first, last = f.flights[0], f.flights[-1]
-    codes = {code for code, _ in getattr(f, "segments", [])} or {f.type}
+def summarize(f: Itinerary, route: Route, bag_fees: dict[str, int]) -> dict:
+    first, last = f.segs[0], f.segs[-1]
+    codes = {s.code for s in f.segs} or {f.type}
     lcc = sorted(c for c in codes if c in bag_fees)
     legs = 2 if route.trip == "round-trip" else 1
     bag_fee = sum(bag_fees[c] for c in lcc) * route.checked_bags * legs
@@ -259,14 +458,14 @@ def summarize(f, route: Route, bag_fees: dict[str, int]) -> dict:
         "bag_fee": bag_fee,
         "lcc": bool(lcc),
         "airline": "、".join(f.airlines) or f.type,
-        "nums": [num for _, num in getattr(f, "segments", [])],
-        "stops": len(f.flights) - 1,
-        "via": [s.to_airport.code for s in f.flights[:-1]],
-        "from": first.from_airport.code,
-        "to": last.to_airport.code,
-        "dep": "%02d:%02d" % first.departure.time,
-        "arr": "%02d:%02d" % last.arrival.time,
-        "arr_plus": (date(*last.arrival.date) - date(*first.departure.date)).days,
+        "nums": [s.num for s in f.segs],
+        "stops": len(f.segs) - 1,
+        "via": [s.to for s in f.segs[:-1]],
+        "from": first.frm,
+        "to": last.to,
+        "dep": "%02d:%02d" % first.dep,
+        "arr": "%02d:%02d" % last.arr,
+        "arr_plus": (date(*last.arr_date) - date(*first.dep_date)).days,
     }
 
 
@@ -420,7 +619,7 @@ def deals_email(items: list[dict], cur: str, site_url: str) -> tuple[str, str, s
 # ---------- 主流程 ----------
 
 def main() -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     ap = argparse.ArgumentParser(description="機票雷達：掃一次機票價格")
     ap.add_argument("--config", default=str(ROOT / "config.toml"))
     ap.add_argument("--test-email", action="store_true", help="另外寄一封測試信，確認 Email 設定正確")
@@ -457,6 +656,7 @@ def main() -> int:
     route_combos: dict[str, list[dict]] = defaultdict(list)
     to_mail: list[dict] = []
     ok = 0
+    fetcher = Fetcher(cfg.get("language", "zh-TW"))
     for i, (route, dep, ret) in enumerate(plan):
         dep_s, ret_s = dep.isoformat(), ret.isoformat() if ret else ""
         ckey = combo_key(route, dep, ret)
@@ -471,7 +671,7 @@ def main() -> int:
         }
         label = f"{route.name} {dep_s}{' → ' + ret_s if ret_s else ''}"
         try:
-            flights = fetch(query)
+            flights = fetcher.fetch(query)
             ok += 1
         except Exception as e:
             combo.update(status="error", error=f"{type(e).__name__}: {e}"[:200])
@@ -516,6 +716,7 @@ def main() -> int:
         elif ckey in alerted and price >= alerted[ckey] * 1.05:
             del alerted[ckey]
 
+    fetcher.close()
     for k in list(alerted):
         if k not in active_keys:
             del alerted[k]
